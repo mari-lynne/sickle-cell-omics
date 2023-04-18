@@ -1,0 +1,458 @@
+---
+title: "RNASeq Pipeline"
+author: "Mari Johnson"
+date: '2022-08-29'
+output: html_document
+---
+
+```{r Rmd setup}
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE, error = TRUE)
+knitr::opts_knit$set(root.dir = '~/Documents/sca/rna') # Permanently sets wd for Rmd
+                                         # Sometimes have to do in console also 
+                                        # setwd("~/Documents/sca/rna")
+```
+
+### Aims:
+
+1)  Pre-process RNAseq data for DGE analysis of sickle cell trait
+2)  Run differential gene expression analysis at both a global level, and individual gene scale
+
+Steps before (phenotype summamry statistics), steps after (pathway analysis)
+
+### Overview of chapters
+
+1)  Pre-processing
+
+-   Read and structure raw count data
+-   Remove lowly expressed genes
+-   Transform and normalise counts
+-   Limma Voom transformation
+
+2)  DGE analysis
+
+-   Create design matrix
+-   Contrast matrix
+-   Fit linear model for comparisons of interest
+
+3)  Volcano Plots
+
+-   Examine differential expressed genes
+-   Visualize comparisons with volcano plots
+-   Highlight top sig genes and genes of interest
+
+Materials:
+
+-   <https://ucdavis-bioinformatics-training.github.io/2018-June-RNA-Seq-Workshop/thursday/DE.html>
+
+-   <https://www.bioconductor.org/packages/devel/workflows/vignettes/RNAseq123/inst/doc/limmaWorkflow.html>
+
+-   <https://www.youtube.com/watch?v=z36fu178jIQ&ab_channel=LiquidBrainBioinformatics>
+
+## 1) Pre-processing
+
+### R set up and Functions
+
+```{r Set Directories, warning=FALSE, message=FALSE, error = FALSE}
+
+# Bioconductor packages
+library(BiocManager)
+library(edgeR)
+library(limma)
+
+# Data viz
+library(RColorBrewer)
+library(ggplot2)
+library(ggrepel)
+
+# Data cleaning
+library(readODS)
+library(forcats)
+library(stringi)
+library(stringr)
+library(janitor)
+library(data.table)
+library(dplyr)
+library(tidylog)
+
+source("~/scripts/functions.R")
+
+# Options ---------------------------------------------------------------------
+
+wd <- c("~/Documents/sca/rna") # Where data is saved
+plot_dir <- c("~/Documents/sca/rna/plots") # Where to save output plots
+data_name <- c("whi_topmed_to6_rnaseq_gene_reads.gct.gz") # Name of data 
+pheno_name <- c("old/rna_seq_prelim_phenotype_2020-03-05.ods")
+
+
+# data input type then that tells u how to read in, e.g load for R
+# csv vs ods, maybe make a read data function
+
+# -----------------------------------------------------------------------------
+
+```
+
+#### Data Set up
+
+```{r Set up Data, include = FALSE}
+
+data <- read_omic(name = data_name, wd = wd)
+pheno <- read_omic(name = pheno_name, wd = wd)
+
+# Clean names
+pheno <- clean_names(pheno)
+
+# Ensure matching data set dimensions
+# match participants
+idx <- (pheno$sample_id %in% colnames(data))
+pheno <- pheno[idx,]
+dim(pheno)
+
+# Save gene info
+gene_info <- data[,1:2]
+# get gene length
+# ensembl = useEnsembl(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
+# genes <-
+#   getBM(
+#     attributes = c(
+#       'ensembl_gene_id',
+#       'hgnc_symbol',
+#       'start_position',
+#       'end_position'
+#     ),
+#     mart = ensembl
+#   ) %>% rename(gene_id = ensembl_gene_id)
+# data$genes <- left_join(data$genes, genes, by = c("gene_id"))
+# 
+# annotations <-
+#   dplyr::transmute(annotations,
+#                    ensembl_gene_id,
+#                    external_gene_name,
+#                    gene_length = end_position - start_position)
+
+
+# Calculate library size
+# Make count matrix
+rownames(data) <- data$Name
+counts <- as.matrix(data[,-c(1:2)])
+# Sum of mapped reads per sample
+lsize <- colSums(counts)
+# save in pheno 
+pheno$lib.size_og <- lsize
+
+# Form DGE list ---------------------------------------------------------------
+dge <- DGEList(counts=counts, samples=pheno, genes=gene_info, group = pheno$stroke_case)
+dge.bkp <- dge
+# dge <- dge.bkp
+
+```
+### Filter and normalise genes
+
+Low expressed genes will be unreliable/not worth testing so remove these low count genes
+Additionally need to normalise data to account for sample library size/gene counts
+
+*Calculate log counts/per million*
+
+```{r Calculate log counts/per million}
+# Convert counts to log to minimize the effect of small values and negatives
+lcpm <- cpm(dge$counts, log=TRUE)
+
+L <- mean(dge$samples$lib.size) * 1e-6
+M <- median(dge$samples$lib.size) * 1e-6
+c(L, M)
+
+# Remove genes with no expression across samples
+keep <- rowSums(dge$counts==0)==ncol(dge$counts)
+
+keep.exprs <- filterByExpr(dge)
+#w All samples appear to belong to the same group
+dge2 <- dge[keep.exprs, ,keep.lib.sizes=FALSE]
+dim(dge2)
+
+# L2 <- mean(dge$samples$lib.size) * 1e-6
+# M2 <- median(dge$samples$lib.size) * 1e-6
+# c(L2, M2)
+
+lcpm2 <- cpm(dge2$counts, log=TRUE)
+
+# Plot
+pdf(paste(plot_dir,"count-filter2.pdf",sep ="/"))
+par(mfrow=c(1,2))
+plot(density(lcpm[,1:100]), main="before filtering", xlab="log CPM", col="seagreen")
+plot(density(lcpm2[,1:100]), main="after filtering", xlab="log CPM", col="#ef5a3a")
+dev.off()
+
+# because there's a large sample size it keeps more genes in, update when we have geno group
+
+# Calculate norm factors --------------------------------
+
+dge2 <- calcNormFactors(dge2, method = "TMM")
+dge2  <- estimateDisp(dge2, robust=TRUE)
+
+```
+
+Visualise the frequency of counts across study before and after filtering
+
+### MDS plots
+
+-   Visually examine the factors to include in your linear model
+-   These could include technical factors such as sequencing lane/batch and also experimental factors such as time points/diagnosis
+-   Ideally you would want to see differences in time points where we expect to see DEG's, and less variation between technical factors
+-   If there is no clustering then that factor is not necessary for the lm
+-   You can also test for two factors together using interaction terms, e.g\
+    `group = interaction(data$meta_data$sequence_pool,data$meta_data$TimePoint)`
+
+```{r MDS plot}
+# Sequencing lane check
+group = as.factor(dge2$samples$stroke_case)
+#Set up group to plot/colours
+lcpm <- cpm(dge2, log = TRUE)
+col.group <- group
+levels(col.group) <- brewer.pal(nlevels(col.group), "Accent")
+col.group <- as.character(col.group) # Character vector of colours
+
+# Plot MDS
+pdf(paste(plot_dir, "ethn_mds.pdf", sep = "/"))
+plotMDS(lcpm, labels = group, col = col.group)
+title(main = "MDS ethnicity")
+dev.off()
+```
+
+### 2) Differential gene expression analysis
+
+**Background**\
+Once our data is pre-processed and normalised, we can compare counts or gene expression between participants and different groups of interest.
+
+If we just wanted to look at normalised counts/gene expression between two participants we could make direct comparisons, with no further modelling required.
+
+However, if we want to make larger comparisons between groups of interest, i.e time points, or between vaccines, just comparing the mean expression of these two groups would be disingenuous, as it would not take into account other factors which influence the overall gene expression of that group.
+
+For example, comparing DGE between Vi-TCV and Vi-PS participants at D7; Vi-PS participants might have an older age, or more participants sequenced in a different batch which could affect mean expression values. By accounting for these factors as covariates in our model, we can more accurately estimate the mean gene expression for that group.
+
+These estimations are made using linear regression models.
+
+The next step is to calculate the fold change (Fc) in the average modelled gene expression between groups. E.g Fc between different time points, baseline and 7-days post-vac, or the difference between Vi-TCV gene expression at D7 and Vi-PS gene expression.
+
+**Analysis set up:**\
+The parameters we include in the model are specified within the *design matrix*, and the contrasts, or comparisons we would like to perform are specified within a *contrast matrix.*
+
+*Overall RNAseq workflow:*
+
+-   Design matrix formation -\> Limma voom (first time)
+
+-   duplicateCorrelation -\> Voom again (if data has repeated measures)
+
+-   lmFit --\> contrasts.fit --\> eBayes --\> TopTable --\> Volcano
+
+**Important Functions:**
+
+-   `lmFit` computes coefficients, residual variances and standard errors. For your linear model, the leading coefficients correspond to average log-expression values for different conditions
+
+-   `voom` Remove heteroskedasity in the data, - equalises variance. Necessary for RNA-seq data as it normalises the resiudals so they are no longer dependent on count size.
+
+-   `duplicateCorrelation` calculates the correlation between samples within your data, this correlation can then be included in the linear model as a blocking factor
+
+-   `contrasts.fit` Re-orientates the fitted model object from the coefficients of the original design matrix to any set of contrasts of the original coefficients. The coefficients, unscaled standard deviations and correlation matrix are re-calculated in terms of the contrasts.
+
+-   `eBayes` computes t-statistics and p-values from the coefficients and standard errors. Running eBayes before contrast.fit will give non-nonsensical results in terms of obtained p-values, as no comparisons have been made
+
+
+```{r Design Matrix, results='hide'}
+
+# Make var of interest a factor
+dge$samples$stroke_case <- as.factor(dge$samples$stroke_case)
+
+design <-
+  model.matrix(~0 + stroke_case + baseline_bmi + lls_age, data = dge$samples)
+
+data$samples <- droplevels(data$samples)
+#Check for Nas in design categories, then filter data [
+test <- data$samples[sapply(data$samples$group, function(x) sum(is.na(x))), ]
+
+```
+*Linear dependencies notes*\
+- The rank of the matrix is the total number of independent columns/vectors in the matrix. - So if our matrix rank is smaller than the number of columns, then there must be linear dependencies, i.e that vector can be made up by either a copy of or multiplying another one of the vectors. - A vector of all zeros will also count as a dependent vector, therefore need to remove these (as well as it being redundant for the model anyways)
+
+### Limma Voom
+
+Limma uses linear modelling on log-CPM values to model gene expression from RNAseq data. An assumption of the model is that the the error's residuals/variance is normally distributed.
+
+However, it has been established that for RNAseq data, the relationship between the number of counts of a given gene, and the variance of those counts is non-linear.\
+Because the variance is unequal across a range of values, i.e the data is heteroskedastic, we have to normalise this unequal variance.
+
+The voom function normalises/adjusts variance so it is no longer dependent on count size, and we can model gene expression accurately in future steps.
+
+As the voom function is normalising the residuals around a fitted model, we need to input the design matrix as described in section 2, which specifies model variables, to perform voom appropriately.
+
+```{r Voom 1}
+#Plots mean count size (x) against variance (y)
+#Lower counts tend to have lower variance
+#Therefore voom normalises - flattens this trend
+#Variances are calculated by fitting a linear model to the data provided by the design matrix
+pdf(paste(plot_dir, "voom1.pdf", sep = ""))
+v <- voom(data, design, plot = TRUE)
+dev.off()
+#more variance I think in post-chall samples
+```
+
+Typically Voom plot shows higher variance for lower counts. If filtering was not performed properly, a drop in variance levels can be observed at the low end of the expression scale due to very small counts. Experiments with high biological variation tend to result in flatter trends, lower biological variation tend to have sharper trends.
+
+When modelling gene expression between conditions using design/contrast matrices, we can now use our corrected data in the Voom object (S4), and visually check that we have removed the variance trend with log expression.
+
+### Blocking factors
+
+Gene expression across mutliple time points will typically correlate with some degree, the participant it was measured in repeatedly.
+
+Account for this effect by estimating the correlation of the 'participant' variable in our data using duplicateCorrelation. The cor value is then used as a 'blocking factor' in the final linear model.
+
+```{r corfit}
+#Estimate the correlation between measurements made on the same subject:
+corfit <-
+  duplicateCorrelation(v, design = design, block = data$samples$lab_id)
+corfit$consensus #0.32
+#Voom 2 ####
+# Apply voom again on original data (with the block and correlation parameters this time)
+pdf(file = paste(plot_dir, "voom_2.pdf", sep = ""))
+v2 <- voom(
+  data,
+  design,
+  block = data$samples$lab_id,
+  correlation = corfit$consensus,
+  plot = TRUE
+)
+dev.off()
+#Lmfit 1###
+fit <-
+  lmFit(v2,
+        design,
+        block = data$samples$lab_id,
+        correlation = corfit$consensus)
+```
+
+```{r Save / load limma voom data}
+#save.image(file = "~/RNA/Daniel/diff_expr_results/VAST_RNAseq.RData")
+load(file = "~/RNA/diff_expr_results/VAST_RNAseq.RData")
+#save.image(file = "~/RNA/Daniel/diff_expr_results/VAST_RNAseq_chall.RData")
+```
+
+### Contrast Matrices
+
+Used in conjunction with a design matrix to calculate specific values of interest between estimated parameters.\
+The matrix is set up as so that rows are associated with model parameters and columns indicate whether that data is to be used in the comparison
+
+```{r All contrast matricies}
+#Use contrasts_2_lm function to model designated comparisons between control/baseline
+#Also outputs toptable results
+#Comparing D1, D7 and 28 days post-vac with baseline
+#results <- contrast_2_lm(group = c("V7", "V1", "D0"), control = c("V0"),efit=fit, des_mat = design)
+#results <- contrast_2_lm(group = c("V7", "V1", "D0"), control = c("V0"),efit=fit, des_mat = design)
+results <-
+  contrast_2_lm(
+    group = groups,
+    control = c("time0"),
+    efit = fit,
+    des_mat = design
+  ) #all times
+groups <- colnames(design[, grep("time", colnames(design))])
+groups <- colnames(design[, grep("time0v", colnames(design))])
+cm <- results$contrasts
+fit2 <- results$fit2
+toptables <- results$top_results
+plotSA(fit2) #check variance post-voom
+# Manual contrast ----------
+colnames(design)
+contrasts <- makeContrasts(
+  nTD_V1_vs_V0 = nTD_V1 - nTD_V0,
+  TD_V1_vs_V0 = TD_V1 - TD_V0,
+  TD_vs_nTD_V1 = (TD_V1 - TD_V0) - (nTD_V1 - nTD_V0),
+  nTD_V7_vs_V0 = nTD_V7 - nTD_V0,
+  TD_V7_vs_V0 = TD_V7 - TD_V0,
+  TD_vs_nTD_V7 = (TD_V7 - TD_V0) - (nTD_V7 - nTD_V0),
+  levels = colnames(design)
+) 
+fit2 <- contrasts.fit(fit, contrasts)
+fit2 <- eBayes(fit2)
+nTD_V1_vs_V0 <- topTable(fit2, coef = 1, number = Inf)
+TD_V1_vs_V0 <- topTable(fit2, coef = 2, number = Inf)
+TD_vs_nTD_V1 <- topTable(fit2, coef = 3, number = Inf)
+nTD_V7_vs_V0 <- topTable(fit2, coef = 4, number = Inf)
+TD_V7_vs_V0 <- topTable(fit2, coef = 5, number = Inf)
+TD_vs_nTD_V7 <- topTable(fit2, coef = 6, number = Inf)
+```
+##### Top tables
+
+```{r top}
+# Saved in gwas_final/eqtl
+V7_vs_V0 <- toptables$V7_vs_V0
+D0_vs_V0 <- toptables$D0_vs_V0
+V1_vs_V0 <- toptables$V1_vs_V0
+write.csv(V7_vs_V0, file = "V7_V0_top.csv", row.names = F)
+write.csv(D0_vs_V0, file = "D0_vs_V0.csv", row.names = F)
+write.csv(V1_vs_V0, file = "V1_vs_V0_top.csv", row.names = F)
+exprs_t <- as.data.frame(t(lcpm))
+pheno_exprs <- bind_cols(pData, exprs_t)
+pheno_exprs <- pheno_exprs[,-c(1:5)]
+write.csv(pheno_exprs, file = "vast_lcpm.csv", row.names = T)
+```
+
+### 3) Data visualisation
+
+#### Plot Pipeline
+
+-   Input toptable results file
+-   Specify directories + plot names
+-   Option to modify highlighted genes/sig levels
+
+```{r Volcano Plots}
+#Final vols ####
+# UPDATE file dirs and data
+# system("mkdir ~/GWAS_22/new_gwas/Plots/DEG/volcanos/h12")
+plot_dir <- c("~/GWAS_22/gwas_final/plots")
+plot_title <- c("24h Post-vaccination")
+deg <- TD_vs_nTD_V1
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# UPDATE
+# Modify gene names
+deg$gene_name <- str_replace(deg$gene_name, "TNFSF13B", "BAFF")
+deg$gene_name <- str_replace(deg$gene_name, "TNFSF13", "APRIL")
+genes_neut <- c("APRIL", "BAFF", "IL1B")
+genes_fc <-
+  c("FCGR3A",
+    "FCGR3C",
+    "FCAR",
+    "FCGR1B",
+    "FCGR2A",
+    "FCGR2B",
+    "FCGR2C",
+    "FCGR1A")
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+deg = TD_vs_nTD_V1
+deg$gene_name <- str_replace(deg$gene_name, "TNFSF13B", "BAFF")
+genes_iga <- c("TNFSF13", "BAFF","TNFSF12", "TGFBI","WARS", "SLAMF6", "ASGR2", "GAL3ST4","CD96", "TCF7L2")
+vol <-
+  plot_vol(deg,
+           lab = 'ns',
+           genes = genes_iga,
+           title = plot_title)
+fc <-
+  plot_vol(deg,
+           lab = 'sig',
+           genes = genes_fc,
+           title = plot_title)
+ns <- plot_vol(deg,
+               lab = 'ns',
+               genes = genes_fc,
+               title = plot_title)
+#Save plots ####
+pdf(file = paste(plot_dir, factor, "sig_neut.pdf", sep = ""))
+neut
+dev.off()
+pdf(file = paste(plot_dir, factor, "sig_fc.pdf", sep = ""))
+fc
+dev.off()
+pdf(file = paste(plot_dir, factor, "ns_fc.pdf", sep = ""))
+ns
+dev.off()
+ns
+pdf(file = paste(plot_dir, factor, "topgenes.pdf", sep = ""))
+top
+dev.off()
