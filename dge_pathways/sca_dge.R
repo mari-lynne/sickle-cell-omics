@@ -18,6 +18,8 @@ library(limma)
 library(RColorBrewer)
 library(ggplot2)
 library(ggrepel)
+library(patchwork)
+library(ggpubr)
 
 # Data cleaning
 library(readODS)
@@ -30,6 +32,7 @@ library(dplyr)
 library(tidylog)
 
 source("~/scripts/functions.R")
+source("~/scripts/color-palettes.R")
 
 # Options and Directories ------------------------------------------------------
 
@@ -45,6 +48,8 @@ pheno_name <- c("sct_rnaseq_pheno.txt")
 setwd(wd)
 
 # Data Set up ------------------------------------------------------------------
+
+load(file = paste0(results_dir, "/sct_dge.RData"))
 
 # RNA seq
 data <- read_omic(name = data_name, wd = wd)
@@ -232,24 +237,217 @@ results_dir <- paste(wd, "results", sep = "/")
 write.table(sig, file = paste(results_dir, "top_sig_dge.txt", sep = "/"), quote = F, sep = "\t", row.names = F, col.names = T)
 write.table(sig$Description, file = paste(results_dir, "top_genes.txt", sep = "/"), quote = F, sep = "\t", row.names = F, col.names = F)
 
+# Haemostasis related genes ----------------------------------------------------
+
+# DGE SCA Steady state vs Healthy controls
+sca_genes <- read.csv(file = "sca_dge.csv")
+sca_genes$Description <- str_trim(sca_genes$Description)
+sig_sca <- filter(toptab, gene_name %in% sca_crisis$Description)
+
+# DGE SCA Crisis vs Healthy controls
+sca_crisis <- read.csv(file = "sca_crisis_dge.csv")
+# trim white space
+sca_crisis$Description <- str_trim(sca_crisis$Description)
+
+
+a <- plot_vol(toptab, lab = 'adj.sig',
+              genes = sca_genes$Description,
+              title = "SCT (rs334) vs healthy controls \n\n SCA steady state genes",
+              FC = 0.25,
+              alpha = 0.6,
+              colours = c("orange", "#ef5a3a", "#a50000", "#800000"))
+
+
+b <- plot_vol(toptab, lab = 'adj.sig',
+         genes = sca_crisis$Description,
+         title = "SCT (rs334) vs healthy controls \n\n SCA crisis genes",
+         FC = 0.25,
+         alpha = 0.6,
+         colours = c("orange", "#ef5a3a", "#a50000", "#800000"))
+
+(a|b) + plot_annotation(tag_levels = "a")
+
+?patchwork
+
+sig_sca <- filter(toptab, gene_name %in% sca_crisis$Description)
+
+
+png(paste(plot_dir,"sct_sca_dge_overlap.png", sep ="/"), width = 680, height = 680)
+(a|b) 
+dev.off()
+
+pdf(paste(plot_dir,"sct_sca_dge_overlap.pdf", sep ="/"))
+(a|b)
+dev.off()
+
+?png
+
+# TAL1 -------------------------------------------------------------------------
+
+
+tal1 <- dge[dge$genes$Description == "TAL1",]
+
+tal1_samp <- as.data.frame(tal1$samples)
+tal1_counts <- as.data.frame(t(tal1$counts))
+tal1 <- cbind(tal1_samp, tal1_counts)
+tal1 <- dplyr::rename(tal1, "TAL1_counts" = "1502")
+
+autumn2 <- c("#A92D2F","#CE7726")
+comp <- list(c("0", "1"))
+
+tal1$cpm <- tal1$TAL1_counts/1e6
+
+c <-
+  tal1 %>% ggplot(aes(x = sct, y = TAL1_counts)) +
+  geom_boxplot(fill = autumn2)+
+  theme_light() +
+  scale_y_continuous(trans='log10') +
+  labs(y = "TAL1 expression (counts)\n", x = "SCT status") +
+  stat_compare_means(comparisons = comp)
+
+png(paste(plot_dir,"TAL1_exprs.png", sep ="/"))
+c
+dev.off()
+
+# Methlyation ------------------------------------------------------------------
+
+sub <- dge[dge$genes$Description == "HBB",]
+
+sub_samp <- as.data.frame(sub$samples)
+sub_counts <- as.data.frame(t(sub$counts))
+sub <- cbind(sub_samp, sub_counts)
+sub$sub_counts <- sub[,31]
+sub$cpm <- sub$sub_counts/1e6
+
+c <-
+  sub %>% ggplot(aes(x = sct, y = sub_counts)) +
+  geom_boxplot(fill = autumn2)+
+  theme_light() +
+  scale_y_continuous(trans='log10') +
+  labs(y = "HBB expression (counts)\n", x = "SCT status") +
+  stat_compare_means(comparisons = comp)
+c
+
+png(paste(plot_dir,"HBB_exprs.png", sep ="/"))
+c
+dev.off()
+
+# All sig meth genes overlap vol
+
+meth <- read.csv(file = "sct_meth_genes.csv")
+meth$Gene <- str_trim(meth$Gene)
+
+m <- plot_vol(toptab, lab = 'sig',
+              genes = meth$Gene,
+              title = "SCT (rs334) vs healthy controls \n\n Methylation sites",
+              FC = 0.25,
+              alpha = 0.6,
+              colours = c("orange", "#ef5a3a", "#a50000", "#800000"))
+m
 
 # Proteomics -------------------------------------------------------------------
 # Cross ref proteomics list of genes, replot
 
 proteins <- fread(paste0(wd, "/meta/sct_proteins.txt"))
+proteins$Protein <- str_trim(proteins$Protein)
 
-# Calculate PCA for RNA seq data
-# Get BMI covars
-
-png(paste(plot_dir,"sct_dge_proteins2.png",sep ="/"))
-plot_vol(toptab, lab = 'sig', genes = proteins$Protein, title = "DEG Sickle Cell Trait (rs334)", FC = 0.25, alpha = 0.6,
-         colours = c("orange", "#ef5a3a", "#a50000", "#800000"))
-dev.off()
+p <- plot_vol(toptab, lab = 'sig',
+              genes = proteins$Protein,
+              title = "SCT (rs334) vs healthy controls \n\n Proteomics",
+              FC = 0.25,
+              alpha = 0.6,
+              colours = c("orange", "#ef5a3a", "#a50000", "#800000"))
+p
 
 pdf(paste(plot_dir,"sct_dge_proteins2.pdf",sep ="/"))
-plot_vol(toptab, lab = 'sig', genes = proteins$Protein, title = "DEG Sickle Cell Trait (rs334)", FC = 0.25, alpha = 0.6,
-         colours = c("orange", "#ef5a3a", "#a50000", "#800000"))
+p
+dev.off()
+
+png(paste(plot_dir,"sct_dge_proteins.png",sep ="/"))
+p
 dev.off()
 
 sig_list <- filter(toptab, gene_name %in% proteins$Protein)
 write.csv(sig_list, file = paste0(results_dir, "/dge_proteiomics.csv"), row.names = F)
+
+# Protein/meth combo plot
+
+png(paste(plot_dir,"sct_protein_meth.png",sep ="/"))
+(p|m)
+dev.off()
+
+pdf(paste(plot_dir,"sct_protein_meth.pdf",sep ="/"), paper = "a4r")
+(p|m)
+dev.off()
+
+?pdf
+
+table(pheno$sct)
+
+
+## HB- beta to gamma ratios ----------------------------------------------------
+
+# Subset data for just Hemoglobin expression data
+HB <- filter(toptab, str_starts(toptab$Description, "HB"))
+idx <- (dge$genes$Description %in% c("HBB", "HBG1", "HBG2"))
+sub <- dge[idx,]
+
+# Make table with HBB and HBG counts, ratios and SCT status for plotting
+
+pheno <- sub$samples
+genes <- t(sub$genes)
+counts2 <- as.data.frame(t(sub$counts))
+colnames(counts2) <- genes[2,]
+
+# Calculate ratios
+counts2$Ratio_HB_G1 <- counts2$HBB / counts2$HBG1
+counts2$Ratio_HB_G2 <- counts2$HBB / counts2$HBG2
+
+# Aggregate HBG (only a base diff so according to Vijay, combine)
+# Should I normalise and then add? check scales
+
+a <- pheno_exprs %>%
+  ggplot(aes(y= HBG1)) + geom_histogram(bins = 50) +
+  ylim(0, 80000) + xlim(0,125) +
+  ylab("HBG1 (counts)") + xlab("count (n)") +
+  theme_light()
+
+b <- pheno_exprs %>%
+  ggplot(aes(y= HBG2)) + geom_histogram(bins = 50) +
+  ylim(0, 80000) + xlim(0,125) +
+  ylab("HBG2 (counts)") + xlab("count (n)") +
+  theme_light()
+
+ggsave(paste(plot_dir,"HBG_hist.png", sep ="/"), width = 3.25, height = 3.25, dpi = 300)
+# TODO reinstall ragg - to fix: Error in f(...) : Graphics API version mismatch
+
+# save plot
+png(paste(plot_dir,"HBG_hist.png", sep ="/"), width = 1680, height = 1680, res = 300)
+(a|b) + plot_annotation(tag_levels = 'A')
+dev.off()
+
+# For now just add
+counts2$HBG <- counts2$HBG1 + counts2$HBG2
+counts2$Ratio_HBG <- counts2$HBB / counts2$HBG
+pheno_exprs <- cbind(pheno, counts2)
+
+# Plot ratios :)
+
+comp <- list(c("0", "1"))
+
+options(scipen=10000)
+p <- 
+  pheno_exprs %>% ggplot(aes(x = group, y = Ratio_HBG, fill = group)) + geom_boxplot() +
+  stat_compare_means(comparisons = comp, paired = FALSE, method = "wilcox.test") +
+  ylab("HBB/HBG \n") + scale_y_log10() + xlab("SCT") +
+  scale_fill_manual(values = c("#A72020", "#FEA82F")) +
+  theme_light() + theme(legend.position = "none")
+
+
+png(paste(plot_dir,"HBG_ratio.png", sep ="/"), width = 1680, height = 1680, res = 300)
+p
+dev.off()
+
+
+
+
