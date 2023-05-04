@@ -389,7 +389,7 @@ table(pheno$sct)
 
 # Subset data for just Hemoglobin expression data
 HB <- filter(toptab, str_starts(toptab$Description, "HB"))
-idx <- (dge$genes$Description %in% c("HBB", "HBG1", "HBG2"))
+idx <- (dge$genes$Description %in% c("HBB", "HBG1", "HBG2")) 
 sub <- dge[idx,]
 
 # Make table with HBB and HBG counts, ratios and SCT status for plotting
@@ -404,7 +404,7 @@ counts2$Ratio_HB_G1 <- counts2$HBB / counts2$HBG1
 counts2$Ratio_HB_G2 <- counts2$HBB / counts2$HBG2
 
 # Aggregate HBG (only a base diff so according to Vijay, combine)
-# Should I normalise and then add? check scales
+# Should I normalize and then add? check scales
 
 a <- pheno_exprs %>%
   ggplot(aes(y= HBG1)) + geom_histogram(bins = 50) +
@@ -449,5 +449,32 @@ p
 dev.off()
 
 
+# Try using E values from voom (log2cpm)CPM based on normalised library size
+idx <- (v$genes$Description %in% c("HBB", "HBG1", "HBG2"))
+sub <- v[idx,]
 
+pheno <- sub$targets
+genes <- t(sub$genes)
+counts2 <- as.data.frame(t(sub$E))
+colnames(counts2) <- genes[2,]
 
+# Calc ratios
+counts2$HBG <- counts2$HBG1 + counts2$HBG2
+counts2$Ratio_HBG <- counts2$HBB / counts2$HBG
+pheno_exprs <- cbind(pheno, counts2)
+
+# Plot
+comp <- list(c("0", "1"))
+
+options(scipen=10000)
+p <-
+  pheno_exprs %>% ggplot(aes(x = group, y = Ratio_HBG, fill = group)) + geom_boxplot() +
+  stat_compare_means(comparisons = comp, paired = FALSE, method = "wilcox.test") +
+  ylab("HBB/HBG \n") + xlab("SCT") +
+  scale_y_continuous(trans='log2') +
+  scale_fill_manual(values = c("#A72020", "#FEA82F")) +
+  theme_light() + theme(legend.position = "none")
+
+png(paste(plot_dir,"HBG_ratio_log2cpm.png", sep ="/"), width = 1680, height = 1680, res = 300)
+p
+dev.off()
