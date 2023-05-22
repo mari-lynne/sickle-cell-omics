@@ -68,19 +68,18 @@ check <- inner_join(rna_link, sct, by = "commonid")
 # 192 no info, 837 sct info (no info are probably the hispanics, exclude for now)
 check$sct <- ifelse(is.na(check$sct) == T, 0, 1)
 table(check$sct)
-sct_pheno <- check
+sct_pheno <- rna_link #check
 
 # ID list
 samples <- rna_link$commonid
 write.table(samples, file = paste(id_dir, "commonid_sct_rnaseq.txt", sep = "/"), quote = F, sep = "\t", row.names = F, col.names = F)
 
 # Tidy pheno file
-sct_pheno <- sct_pheno %>% rename(rnaseq_ids = 'colnames(data)')
-sct_pheno <- sct_pheno %>% select(rnaseq_ids, commonid, subject_id, age, ethnic, sct, Whills, flagged_seq_qc_metric, pick_plate_1_indicates_which_samples_were_prepped_together, pick_plate_2_repeat)
+sct_pheno <- sct_pheno %>% dplyr::rename(rnaseq_ids = 'colnames(data)')
+sct_pheno <- sct_pheno %>% dplyr::select(rnaseq_ids, commonid, subject_id, age, ethnic, flagged_seq_qc_metric, pick_plate_1_indicates_which_samples_were_prepped_together, pick_plate_2_repeat)
 colnames(sct_pheno) <- str_remove_all(colnames(sct_pheno), "\\.y")
 sct_pheno <- sct_pheno %>% rename(flagged_seq_qc = flagged_seq_qc_metric,
-                                  pick_plate1 = pick_plate_1_indicates_which_samples_were_prepped_together,
-                                  whills = Whills)
+                                  pick_plate1 = pick_plate_1_indicates_which_samples_were_prepped_together)
 
 write.table(sct_pheno, file = paste0(meta_dir, "/sct_rnaseq_pheno.txt"), quote = F, sep = "\t", row.names = F, col.names = T)
 
@@ -94,6 +93,7 @@ sct_pheno2 <- sct_pheno2 %>% select(rnaseq_ids, commonid, subject_id, bmi_t0, sm
 sct_pheno2 <- sct_pheno2 %>% rename(age = age.y)
 
 write.table(sct_pheno2, file = paste0(meta_dir, "/sct_rnaseq_pheno.txt"), quote = F, sep = "\t", row.names = F, col.names = T)
+write.table(sct_pheno2, file = paste0(meta_dir, "/rnaseq_pheno_all.txt"), quote = F, sep = "\t", row.names = F, col.names = T)
 
 
 # Manual genotype info attempts ------------------------------------------------
