@@ -380,11 +380,6 @@ pdf(paste(plot_dir,"sct_protein_meth.pdf",sep ="/"), paper = "a4r")
 (p|m)
 dev.off()
 
-?pdf
-
-table(pheno$sct)
-
-
 ## HB- beta to gamma ratios ----------------------------------------------------
 
 # Subset data for just Hemoglobin expression data
@@ -448,7 +443,7 @@ png(paste(plot_dir,"HBG_ratio.png", sep ="/"), width = 1680, height = 1680, res 
 p
 dev.off()
 
-
+# HBB ratios voom ----------------------------
 # Try using E values from voom (log2cpm)CPM based on normalised library size
 idx <- (v$genes$Description %in% c("HBB", "HBG1", "HBG2"))
 sub <- v[idx,]
