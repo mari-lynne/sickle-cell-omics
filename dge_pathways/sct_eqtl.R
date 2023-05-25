@@ -277,6 +277,8 @@ write.csv(meth_pro, file = paste0(results_dir, "/protein_methylation_overlap.csv
 ### Save data -----
 save.image(file = paste0(results_dir, "/sct_eqtl.RData"))
 
+load(file = paste0(results_dir, "/sct_eqtl.RData"))
+
 
 ### JHS overlap ---------------------
 
@@ -318,3 +320,11 @@ write.table(reps, file = paste0(results_dir, "/all_trans_qtl.csv"), row.names = 
 write.table(jhs_whi_trans2, file = paste0(results_dir, "/jhs_trans_qtl.csv"), row.names = F)
 write.table(mesa_whi_trans2, file = paste0(results_dir, "/mesa_trans_qtl.csv"), row.names = F)
 
+
+# HBF overlap ==----------------------------
+
+View(trans_sig)
+
+hbf_top <- c("USP34", "AFF3", "FYB1", "BACH2", "HBB", "BCL11A", "FOXA1", "CTC1", "GATA1", "PSME4", "NEF2", "ZNF491")
+
+hbf <- intersect(trans_sig$hgnc_symbol, hbf_top)
