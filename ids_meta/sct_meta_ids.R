@@ -96,22 +96,3 @@ write.table(sct_pheno2, file = paste0(meta_dir, "/sct_rnaseq_pheno.txt"), quote 
 write.table(sct_pheno2, file = paste0(meta_dir, "/rnaseq_pheno_all.txt"), quote = F, sep = "\t", row.names = F, col.names = T)
 
 
-# Manual genotype info attempts ------------------------------------------------
-# Plink ids
-# see bash_notes; ran plink code in terminal
-
-# plink2 --vcf WHI_share_Affy6.0-2015-03-05.chr11.vcf.gz --make-pgen--out whi_share_chr11
-psam <- fread("~/Documents/whi_sca/genomics/whi_share_chr11.psam")
-keep <- intersect(psam$`#IID`, rna_link$share_sample_id)
-
-write.table(keep, file = paste(id_dir, "keep_list.txt", sep = "/"), quote = F, sep = "\t", row.names = F, col.names = F)
-
-# plink2 --pfile whi_share_chr11 --keep keep_list.txt --make-pgen --out whi_share_rna
-
-# filter for sca variant # CHR 11 5227002
-
-pvar <- fread("~/Documents/whi_sca/genomics/whi_share_rna.pvar")
-sct <- filter(pvar, POS == "5227001") # rs311 site
-
-sct <- filter(pvar, POS %in% 5226001:5228001)
-# No variant measured at that site, possibly filtered in QC
