@@ -22,7 +22,6 @@ library(patchwork)
 library(ggpubr)
 
 # Data cleaning
-library(readODS)
 library(forcats)
 library(stringi)
 library(stringr)
@@ -237,6 +236,22 @@ results_dir <- paste(wd, "results", sep = "/")
 write.table(sig, file = paste(results_dir, "top_sig_dge.txt", sep = "/"), quote = F, sep = "\t", row.names = F, col.names = T)
 write.table(sig$Description, file = paste(results_dir, "top_genes.txt", sep = "/"), quote = F, sep = "\t", row.names = F, col.names = F)
 
+
+# TOPMED genes of interest -----------------------------------------------------
+
+topmed <- dge[dge$genes$Description %in% c("RUNDC3A", "RUNDC3A-AS1", "HBA1", "HBA2", "HBB", "HBG1", "HBG2", "SLC4A1", "SLC25A39"),]
+
+topmed_samp <- as.data.frame(topmed$samples)
+topmed_counts <- as.data.frame(t(topmed$counts))
+topmed <- cbind(topmed_samp, topmed_counts)
+#topmed <- dplyr::rename(topmed, "TAL1_counts" = "1502")
+
+colnames(topmed)[31:39] <- c("RUNDC3A", "RUNDC3A-AS1", "HBA1", "HBA2", "HBB", "HBG1", "HBG2", "SLC4A1", "SLC25A39")
+topmed <- select(topmed, -commonid)
+
+write.csv(topmed, file = paste0(results_dir, "genes-interest.csv"), row.names = F)
+
+
 # Haemostasis related genes ----------------------------------------------------
 
 # DGE SCA Steady state vs Healthy controls
@@ -284,8 +299,8 @@ dev.off()
 
 # TAL1 -------------------------------------------------------------------------
 
-
 tal1 <- dge[dge$genes$Description == "TAL1",]
+
 
 tal1_samp <- as.data.frame(tal1$samples)
 tal1_counts <- as.data.frame(t(tal1$counts))
@@ -473,3 +488,83 @@ p <-
 png(paste(plot_dir,"HBG_ratio_log2cpm.png", sep ="/"), width = 1680, height = 1680, res = 300)
 p
 dev.off()
+
+
+### TPM ---------------------------------------------------------------
+
+# 2) Calculate TPM matrix ---------------------------------------------------------
+# function
+tpm <- function(counts,len) {
+  x <- counts/len
+  return(t(t(x)*1e6/colSums(x)))
+}
+
+HB <- c("HBA1", "HBA2", "HBB", "HBG1", "HBG2")
+# sub_list = c("TAL1","RUNDC3A", "RUNDC3A-AS1", "HBA1", "HBA2", "HBB", "HBG1", "HBG2", "SLC4A1", "SLC25A39")
+sub_list <- filter(toptab, (adj.P.Val < 0.05 & (logFC < -0.1 | logFC > 0.1 ))| Description %in% HB) %>%
+  select(Description) # 299 - 162
+
+sub_list <- select(toptab, Description)
+
+sub_list$hgnc_symbol <- sub_list$Description
+# Get gene/transcript length from biomart
+ensembl = useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl")
+genes <- getBM(
+  attributes=c('ensembl_gene_id', 'hgnc_symbol','start_position','end_position'),
+  mart = ensembl)
+genes$size = genes$end_position - genes$start_position
+
+sub_list <- inner_join(sub_list, genes, by = "hgnc_symbol")
+# filter dups
+sub_list <- sub_list[(stri_duplicated(sub_list$hgnc_symbol)==FALSE), ]
+dim(sub_list)
+topmed <- dge[dge$genes$Description %in% sub_list$Description, ]
+dim(topmed)
+topmed$genes <- left_join(sub_list, topmed$genes, by = "Description")
+
+  
+options(scipen=999)
+top_tpm <- as.data.frame(t(tpm(topmed$counts, topmed$genes$size)))
+colnames(top_tpm) <- topmed$genes$hgnc_symbol
+top_tpm <- cbind(topmed$samples, top_tpm)
+top_tpm <- select(top_tpm, -commonid)
+
+#load(file = paste0(results_dir, "/sct_dge.RData"))
+
+write.csv(top_toptab, file = paste0(results_dir, "/top_tab_sig.csv"), row.names = F)
+write.csv(top_tpm, file = paste0(results_dir, "/tpm_sig.csv"), row.names = F)
+
+
+# TPM correlations ------------------------------------------------------------
+options(scipen=999)
+top_tpm <- as.data.frame(t(tpm(topmed$counts, topmed$genes$size)))
+colnames(top_tpm) <- topmed$genes$hgnc_symbol #sub_list$
+control_vec <- top_tpm$HBB
+top_tpm <- as.matrix(top_tpm)
+# control_vec <- counts2$Ratio_HBG # This is a proxy for feotal haemoglobin
+
+# Calculate correlation
+correlations <- apply(top_tpm, 2, function(x) cor(x, control_vec))
+# Output correlations
+print(correlations)
+
+# Calculate sig correlation
+correlations <- apply(top_tpm, 2, function(x) {
+  cor_result <- cor(x, control_vec, method = "spearman")
+  
+  # Filter correlations based on threshold and statistical significance
+  if (abs(cor_result) > 0.5 && cor_result >= 0 && cor_result < 1) {
+    p_value <- cor.test(x, control_vec, method = "spearman")$p.value
+    if (p_value < 0.05) {
+      return(cor_result)
+    }
+  }
+  
+  return(NA)  # If correlation doesn't meet the criteria, return NA
+})
+
+# Remove NA values
+cor_result <- correlations[!is.na(correlations)]
+
+# Output correlations
+print(correlations)
