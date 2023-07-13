@@ -3,6 +3,8 @@
 ### R set up and Functions -----------------------------------------------------
 
 source("~/scripts/r-packages.R")
+library("patchwork")
+library("ggpubr")
 source("~/scripts/functions.R")
 source("~/scripts/color-palettes.R")
 
@@ -274,8 +276,8 @@ meth_pro <- bind_rows(sig_meth, sig_proteins)
 
 write.csv(meth_pro, file = paste0(results_dir, "/protein_methylation_overlap.csv"), row.names = FALSE)
 
-### Save data -----
-save.image(file = paste0(results_dir, "/sct_eqtl.RData"))
+### Save/load data -----
+#save.image(file = paste0(results_dir, "/sct_eqtl.RData"))
 
 load(file = paste0(results_dir, "/sct_eqtl.RData"))
 
@@ -328,3 +330,67 @@ View(trans_sig)
 hbf_top <- c("USP34", "AFF3", "FYB1", "BACH2", "HBB", "BCL11A", "FOXA1", "CTC1", "GATA1", "PSME4", "NEF2", "ZNF491")
 
 hbf <- intersect(trans_sig$hgnc_symbol, hbf_top)
+
+# HBF expression 
+
+## HB- beta to gamma ratios ----------------------------------------------------
+
+# Subset data for just Hemoglobin expression data
+HB <- filter(toptab, str_starts(toptab$hgnc_symbol, "HB"))
+idx <- (dge$genes$hgnc_symbol %in% c("HBB", "HBG1", "HBG2")) 
+sub <- dge[idx,]
+
+# Make table with HBB and HBG counts, ratios and SCT status for plotting
+
+pheno <- sub$samples
+genes <- t(sub$genes)
+counts2 <- as.data.frame(t(sub$counts))
+colnames(counts2) <- genes[2,]
+
+# Calculate ratios
+# For now just aggregate HBG1/2
+counts2$HBG <- counts2$HBG1 + counts2$HBG2
+counts2$Ratio_HBG <- counts2$HBB / counts2$HBG
+pheno_exprs <- cbind(pheno, counts2)
+
+# Aggregate HBG (only a base diff so according to Vijay, combine)
+# Should I normalize and then add? check scales
+
+a <- pheno_exprs %>%
+  ggplot(aes(y= HBG1)) + geom_histogram(bins = 50) +
+  ylim(0, 80000) + xlim(0,125) +
+  ylab("HBG1 (counts)") + xlab("count (n)") +
+  theme_light()
+
+b <- pheno_exprs %>%
+  ggplot(aes(y= HBG2)) + geom_histogram(bins = 50) +
+  ylim(0, 80000) + xlim(0,125) +
+  ylab("HBG2 (counts)") + xlab("count (n)") +
+  theme_light()
+
+ggsave(paste(plot_dir,"HBG_hist.png", sep ="/"), width = 3.25, height = 3.25, dpi = 300)
+# TODO reinstall ragg - to fix: Error in f(...) : Graphics API version mismatch
+
+# save plot
+png(paste(plot_dir,"HBG_hist.png", sep ="/"), width = 1680, height = 1680, res = 300)
+(a|b) + plot_annotation(tag_levels = 'A')
+dev.off()
+
+# Plot ratios :)
+comp <- list(c("0", "1"))
+
+options(scipen=10000)
+p <- 
+  pheno_exprs %>% ggplot(aes(x = group, y = Ratio_HBG, fill = group)) + geom_boxplot() +
+  stat_compare_means(comparisons = comp, paired = FALSE, method = "wilcox.test") +
+  ylab("HBB/HBG \n") + scale_y_log10() + xlab("SCT") +
+  scale_fill_manual(values = c("#A72020", "#FEA82F")) +
+  theme_light() + theme(legend.position = "none")
+
+
+png(paste(plot_dir,"HBG_ratio.png", sep ="/"), width = 1680, height = 1680, res = 300)
+p
+dev.off()
+
+
+write.csv(pheno_exprs, file = paste0(results_dir, "/HBG_ratios.csv"), row.names = F, quote = F)
