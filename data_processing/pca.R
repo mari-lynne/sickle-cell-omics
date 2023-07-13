@@ -32,6 +32,14 @@ write.table(pc_top, file = "pc_top.txt", quote = F, col.names = T, row.names = T
 
 # update covar matrix (do at the start of sca_deg.R)
 
+# check against known covars ---------------------------
+
+
+knownCovariates<- select(dge$samples, "age", "bmi_t0")
+  
+
+dataCovariates[,c(1:5,66:68)] #368*8. 368 samples, 8 known covariates.
+identical(rownames(knownCovariates),rownames(expr))
 
 
 covars <- cbind(pheno, pc_top)
