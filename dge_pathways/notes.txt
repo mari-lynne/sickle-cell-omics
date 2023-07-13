@@ -1,0 +1,34 @@
+# Lab notes 
+
+SCT_correlations 26/06/2023
+
+Corr with HBB
+
+       HBB        HBG2        HBG1        HBA2        HBA1      SLC4A1 RUNDC3A-AS1     RUNDC3A    SLC25A39        TAL1 
+  1.0000000   0.8837166   0.3909397   0.3922948  -0.8805988   0.8419459   0.9109876   0.8118001   0.8279209   0.8857075 
+  
+  # values with spearman
+          HBB        HBG2        HBG1        HBA2        HBA1      SLC4A1 RUNDC3A-AS1     RUNDC3A    SLC25A39        TAL1 
+  1.0000000   0.7091824   0.1855146   0.2638073  -0.6146081   0.2803294   0.7227475   0.6119205   0.5203013   0.7543442 
+  
+# Pearson correlations ---------------------------------------------------------
+  
+# Subset -----------------------------------------------------------------------
+
+> results_sig <- filter(results_df, P_Value <= 0.05)
+filter: removed 12 rows (8%), 130 rows remaining
+
+80 out of 142 top genes have sig correlations with HBB
+> results_sig <- filter(results_df, P_Value <=0.05 & (Correlation > 0.5 | Correlation < -0.5))
+filter: removed 62 rows (44%), 80 rows remaining
+  
+# All genes --------------------------------------------------------------------
+
+# Weird values for r, lower than when computing just subset
+  
+  # 15948 genes top tpm
+  # 55575 have <0.05 sig correlations, (no r filter though)
+  
+  filter: removed 10,373 rows (65%), 5,575 rows remaining
+  
+  
