@@ -16,24 +16,25 @@ source("~/scripts/r-packages.R")
 source("~/scripts/functions.R")
 
 wd <- c("~/Documents/whi_sca/rna") # Where main data is saved
-plot_dir <- c("~/Documents/whi_sca/rna/plots") # Where to save output plots
-id_dir <- ("~/Documents/whi_sca/rna/ids")
+plot_dir <- c("~/Documents/whi_sca/rna/plots")
 meta_dir <- c("~/Documents/whi_sca/rna/meta")
 results_dir <- c("~/Documents/whi_sca/rna/results")
 
 data_name <- c("whi_topmed_to6_rnaseq_gene_reads.gct.gz") 
-
 covar <- read.csv(file = paste0(meta_dir, "/sct_all_covars_Jul23.csv"))
 
 # RNA seq data ------------------------------------------------------------------
 data <- read_omic(name = data_name, wd = wd)
 
 sub <- as.matrix(data[,colnames(data)%in% covar$rnaseq_ids])
-# TODO (turn into an option) # Filter data to just include sct genotyped samples, and remove name/descript cols 
-sct_ids <- covar[covar$sct == 1, rnaseq_ids] # 144
-sct_covar <- covar[covar$sct == 1, ]
+# OPTION
+# Filter out hispanics
+# Filter data to just include sct genotyped samples, and remove name/descript cols
+sct_ids <- covar[covar$ethnic==3, "rnaseq_ids"]
+sct_ids <- covar[covar$sct == 1, "rnaseq_ids"] # 144
 
 sub <- sub[, colnames(sub) %in% sct_ids] # OR
+dim(sub)
 sub <- sub # ALL SAMPLES
 
 ## Genes and counts ------------------------------------------------------------
@@ -60,6 +61,7 @@ filter_genes <-
 
 # Make DGE list
 row.names(sub) <- filter_genes$Name
+covar <- covar[covar$rnaseq_ids %in% sct_ids,]
 dge <- DGEList(counts=sub, samples=covar, genes=filter_genes) # covar for all samps
 
 # Filter genes missing ensembl and transcript length info 
@@ -87,14 +89,49 @@ dim(dge) # 13938  144
 exprs <- as.matrix(dge$counts)
 pData <- dge$samples
 pData$sct <- as.factor(pData$sct)
-pData <- select(pData, plate, sct) # TODO test with and without sct covar
-
+pData <- select(pData, plate, sct) 
 combat <- sva::ComBat_seq(counts=exprs, batch=pData$plate, full_mod=TRUE, group = pData$sct)
+
 row.names(combat) <- dge$genes$Name
 dim(combat)
 
+## Combat PCA plots -----------------------------------------------
+
+# Check technical and biological factors
+
+# Calculate PCA before batch correction
+pca_before <- prcomp(t(exprs))
+pca_df_before <- as.data.frame(pca_before$x[, 1:2]) %>%
+  mutate(Batch = as.factor(pData$plate), sct = as.factor(pData$sct))
+
+# Calculate PCA after batch correction
+pca_after <- prcomp(t(combat))
+pca_df_after <- as.data.frame(pca_after$x[, 1:2]) %>%
+  mutate(Batch = as.factor(pData$plate), sct = as.factor(pData$sct))
+
+# Plot PCA before batch correction
+a <- ggplot(pca_df_before, aes(x = PC1, y = PC2, color = sct)) +
+  geom_point() +
+  stat_ellipse(aes(fill = sct), alpha = 0.6) +
+  labs(title = "PCA Before Batch Correction")
+a
+
+# Plot PCA after batch correction
+b <- ggplot(pca_df_after, aes(x = PC1, y = PC2, color = sct)) +
+  geom_point() + 
+  stat_ellipse(aes(fill = sct), alpha = 0.6) +
+  labs(title = "After Batch Correction")
+
+
+library(patchwork)
+(a+b) + plot_layout(guides = "collect")
+# I think plate might be more useful
+
+ggsave("plate_bc_pca.png")
+
 #### Normalise -----------------------------------------------------------------
 combat_norm <- vst(combat)
+
 # Update DGE object
 dge_bc <- DGEList(counts=combat_norm, samples=dge$samples, genes=dge$genes)
 
@@ -120,5 +157,7 @@ dim(pheno_exprs)
 
 pheno_exprs <- clean_cols(pheno_exprs)
 
-write.csv(pheno_exprs, file = paste0(meta_dir, "/sct_all_covars_hbg_Jul23.csv"), row.names = F)
-saveRDS(dge_bc, file = "dge_bc_all.rds")
+write.csv(pheno_exprs, file = paste0(meta_dir, "/sct_black_covars_hbg_Jul23.csv"), row.names = F)
+# update DGE
+dge_bc$samples <- pheno_exprs
+saveRDS(dge_bc, file = "dge_bc_black.rds")
