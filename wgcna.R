@@ -1,188 +1,33 @@
-# wgcna
+# Weighted Gene Correlation Network Analysis
 
 # Set up:
-
 source("~/scripts/r-packages.R")
 source("~/scripts/functions.R")
-# source("~/scripts/color-palettes.R")
-
-# Extra packages 
-
-library(magrittr)
-library(DESeq2)
 
 # Options and Directories ------------------------------------------------------
 
 wd <- c("~/Documents/whi_sca/rna") # Where main data is saved
 plot_dir <- c("~/Documents/whi_sca/rna/plots") # Where to save output plots
-id_dir <- ("~/Documents/whi_sca/rna/ids")
 meta_dir <- c("~/Documents/whi_sca/rna/meta")
 results_dir <- c("~/Documents/whi_sca/rna/results")
-
-data_name <- c("whi_topmed_to6_rnaseq_gene_reads.gct.gz") 
-pheno_name <- c("sct_rnaseq_pheno.txt")
 
 setwd(wd)
 
 # Load data --------------------------------------------------------------------  
 
 # RNA seq
-data <- read_omic(name = data_name, wd = wd)
+dge_bc <- readRDS(file = "dge_bc_all.rds")
+# combat adjusted for plate, and also vst normalised after
+covar <- read.csv(file = paste0(meta_dir, "/sct_all_covars_Jul23.csv"))
 
-## Pheno ------------------------------------------------------------------------
+# Exclude hispanics for now
+dge_bc <- dge_bc[, dge_bc$samples$ethnic==3]
 
-# Phenotype and meta data (see sct_id_pheno_match.R for more)
-pheno <- fread(paste(meta_dir, pheno_name, sep = "/"))
-# pheno <- filter(pheno, sct == "1" & flagged_seq_qc != "Yes") # 144 SCT participants
-pheno <- filter(pheno, flagged_seq_qc != "Yes")
-
-## PCA-covar -------------------------------------------------------------------------
-
-# See pca.R
-pc_top <- fread(file = paste0(results_dir, "/pc_top.txt"))
-pc_top <- rename(pc_top, rnaseq_ids = V1)
-
-covar <- left_join(pheno, pc_top, by = "rnaseq_ids")
-
-covar <- covar %>%
-  mutate(plate = coalesce(covar$pick_plate1, covar$pick_plate_2_repeat)) %>%
-  select(-c("pick_plate1", "pick_plate_2_repeat"))
-
-# Recode smoking never missing vs current and past
-covar <- covar %>%
-  mutate(smoking = ifelse
-         (smoking == "Missing", "Never", covar$smoking))
-
-# Update factors
-covar$plate <- as.factor(covar$plate)
-
-# Add whi data
-whi <-
-  read.csv(file = paste0(meta_dir, "/WHI_HTNKidney_2023-02-27.csv")) %>% 
-  rename(subject_id = subjectID)
-
-whi_sct <- filter(whi, subject_id %in% pheno$subject_id)
-covar <- left_join(covar, whi_sct, by= "subject_id") %>% select(where(not_all_na))
-
-covar <- rename(covar, eGFR = eGFRCKDEpi)
-
-# Summarise pheno
-# summary_phen<- summarize_phenotypes(pheno = covar,
-                                    # categorical_variables = c("smoking"),
-                                    # numeric_variables = c("age","eGFR","eGFRMDRD"),
-                                    # strata = "smoking")
-
-### Filter SCT ----------------------------------------------------------------
-## Genes and counts ------------------------------------------------------------
-
-# Filter data to just include sct genotyped samples, and remove name/descript cols 
-sub <- as.matrix(data[,colnames(data)%in% covar$rnaseq_ids])
-# TODO (turn into an option)
-sct_ids <- covar[covar$sct == 1, rnaseq_ids] # 144
-sct_covar <- covar[covar$sct == 1, ]
-
-sub <- sub[, colnames(sub) %in% sct_ids]
-
-# Genes
-gene_info <- data[, 1:2]
-
-# More gene info
-gene_info <- rename(gene_info, hgnc_symbol = Description)
-
-ensembl = useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl")
-
-genes <- getBM(
-  attributes=c('ensembl_gene_id', 'hgnc_symbol','start_position','end_position'),
-  mart = ensembl)
-
-genes$size = genes$end_position - genes$start_position
-
-# Merge ensembl info and current gene info
-# TODO update to filter duplicates by lowest expressing transcript
-filter_genes <- 
-  left_join(gene_info %>% group_by(hgnc_symbol) %>% mutate(id = row_number()),
-            genes %>% group_by(hgnc_symbol) %>% mutate(id = row_number()), 
-            by = c("hgnc_symbol", "id"))
-
-# Make DGE list
-row.names(sub) <- filter_genes$Name
-dge <- DGEList(counts=sub, samples=sct_covar, genes=filter_genes) # covar for all samps
-
-# Filter genes missing ensembl and transcript length info 
-dge <- dge[!is.na(dge$genes$ensembl_gene_id), ]
-
-dim(dge)
-
-# QC --------------------------------------------------------------------------
-
-## Filter low counts
-
-# Filter zero counts across all samples
-zero_counts <- rowSums(dge$counts==0)==ncol(dge$counts)
-dge <- dge[!zero_counts, ,keep.lib.sizes=FALSE]
-dim(dge$counts)
-
-# Filter low count
-keep.exprs <- filterByExpr(dge, group = dge$samples$sct)
-dge <- dge[keep.exprs, ,keep.lib.sizes=FALSE]
-dim(dge) # 13938  144
-
-## Batch correction ------------------------------------------------------------
-
-#TODO add PCA plots
-exprs <- as.matrix(dge$counts)
-pData <- dge$samples
-pData$sct <- as.factor(pData$sct)
-pData <- select(pData, plate, sct) # TODO test with and without sct covar
-
-combat <- sva::ComBat_seq(counts=exprs, batch=pData$plate, full_mod=TRUE) # group=pData$sct
-row.names(combat) <- dge$genes$Name
-
-dim(combat) # rows = genes, columns = samples, needs to be transposed for wgcna format rows = samples, columns = genes
-
-# WGCNA set up -----------------------------------------------------------------
-
-### Normalise -------------------------------------------------------------------
-
-combat_norm <- vst(combat)
-
-# Update DGE object
-dge_bc <- DGEList(counts=combat_norm, samples=dge$samples, genes=dge$genes)
-
-## HBF Phenotype ---------------------------------------------------------------
-
-# Subset data for just Hemoglobin expression data
-idx <- (dge_bc$genes$hgnc_symbol %in% c("HBB", "HBG1", "HBG2")) 
-sub <- dge_bc[idx,]
-dim(sub)
-
-# Make table with HBB and HBG counts, ratios and SCT status for plotting
-pheno <- sub$samples
-genes <- t(sub$genes)
-counts2 <- as.data.frame(t(sub$counts))
-colnames(counts2) <- genes[2,]
-
-# Calculate ratios
-# For now just aggregate HBG1/2
-counts2$HBG <- counts2$HBG1 + counts2$HBG2
-counts2$Ratio_HBG <- counts2$HBB / counts2$HBG
-pheno_exprs <- cbind(pheno, counts2)
-dim(pheno_exprs)
 
 ### WGCNA format ---------------------------------------------------------------
 # wgcna format rows = samples, columns = genes
-
+# 
 gene_matrix <- t(dge_bc$counts)
-
-# Clinical phenotypes + cell counts --------------------------------------------
-clin <- clean_names(read.csv(file = paste0(meta_dir, "/WHI_inflamation_2023-02-27.csv")))
-whi_clin <- filter(clin, subject_id %in% pheno$subject_id)
-# pheno_exprs
-pheno_exprs <- left_join(pheno_exprs, whi_clin, by= "subject_id")
-pheno_exprs <- pheno_exprs %>% select(-ends_with(".y"))
-colnames(pheno_exprs) <- str_remove_all(colnames(pheno_exprs), ".x")
-pheno_exprs <- pheno_exprs %>% select(-c("as311", "as315", "baa23"))
-# write.csv(pheno_exprs, file = paste0(meta_dir, "/sct_only_study_clin_hbb_pheno.csv"))
 
 # 0) exlude sampe outliters ----------------------------------------------------
 
