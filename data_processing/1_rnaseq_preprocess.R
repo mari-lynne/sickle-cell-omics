@@ -27,7 +27,8 @@ covar <- read.csv(file = paste0(meta_dir, "/sct_all_covars_Jul23.csv"))
 data <- read_omic(name = data_name, wd = wd)
 
 sub <- as.matrix(data[,colnames(data)%in% covar$rnaseq_ids])
-# OPTION
+dim(sub)
+# OPTION:
 # Filter out hispanics
 # Filter data to just include sct genotyped samples, and remove name/descript cols
 sct_ids <- covar[covar$ethnic==3, "rnaseq_ids"]
@@ -130,10 +131,13 @@ library(patchwork)
 ggsave("plate_bc_pca.png")
 
 #### Normalise -----------------------------------------------------------------
-combat_norm <- vst(combat)
 
+# OPTION: # Normalise og data (save as dge_bc this round to reuse code)
+combat_norm <- vst(combat)
+combat_norm <- vst(dge$counts)
 # Update DGE object
 dge_bc <- DGEList(counts=combat_norm, samples=dge$samples, genes=dge$genes)
+
 
 ## HBF Phenotype ---------------------------------------------------------------
 
@@ -156,8 +160,14 @@ pheno_exprs <- cbind(dge_bc$samples, counts2)
 dim(pheno_exprs)
 
 pheno_exprs <- clean_cols(pheno_exprs)
+pheno_exprs <- select(pheno_exprs, -c("baa23", "as311", "as315", "baa23.1", "as311.1", "as315.1", "whills"))
 
 write.csv(pheno_exprs, file = paste0(meta_dir, "/sct_black_covars_hbg_Jul23.csv"), row.names = F)
+
+# OPTION
 # update DGE
 dge_bc$samples <- pheno_exprs
 saveRDS(dge_bc, file = "dge_bc_black.rds")
+
+# No batch effect DGE
+saveRDS(dge_bc, file = "dge_black.rds")
