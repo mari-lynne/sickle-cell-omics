@@ -7,27 +7,30 @@ source("~/scripts/functions.R")
 # Options and Directories ------------------------------------------------------
 
 wd <- c("~/Documents/whi_sca/rna") # Where main data is saved
-plot_dir <- c("~/Documents/whi_sca/rna/plots") # Where to save output plots
+plot_dir <- c("~/Documents/whi_sca/rna/plots/wgcna/updates/just_sct/no_bc") # Where to save output plots
 meta_dir <- c("~/Documents/whi_sca/rna/meta")
 results_dir <- c("~/Documents/whi_sca/rna/results")
 
 setwd(wd)
 
 # Load data --------------------------------------------------------------------  
-
+# OPTION with our without bc
 # RNA seq
-dge_bc <- readRDS(file = "dge_bc_all.rds")
+dge <- readRDS(file = "dge_bc_black.rds")
+dge <- readRDS(file = "dge_black.rds")
+
 # combat adjusted for plate, and also vst normalised after
-covar <- read.csv(file = paste0(meta_dir, "/sct_all_covars_Jul23.csv"))
+covar <- read.csv(file = paste0(meta_dir, "/sct_black_covars_hbg_Jul23.csv"))
 
-# Exclude hispanics for now
-dge_bc <- dge_bc[, dge_bc$samples$ethnic==3]
-
+# OPTION: Just SCT
+dge <- dge[, dge$samples$sct==1]
+# Option: remove manual outliers then redo sample clustering
+outliers <- c("X941368")
+dge <- dge[, dge$samples$rnaseq_ids %!in% outliers]
 
 ### WGCNA format ---------------------------------------------------------------
 # wgcna format rows = samples, columns = genes
-# 
-gene_matrix <- t(dge_bc$counts)
+gene_matrix <- t(dge$counts)
 
 # 0) exlude sampe outliters ----------------------------------------------------
 
@@ -41,22 +44,23 @@ par(mar = c(0,4,2,0))
 plot(sampleTree, main = "Sample clustering to detect outliers", sub="", xlab="", cex.lab = 1.5,
      cex.axis = 1.5, cex.main = 2)
 
+# Cut first outlier in prev section, then redo # X941368
+
 # TODO redo but need to add in the fact that some are SCT so cluster seprately and look for outliers separetly
 
 # Plot a line to show the cut
-abline(h = 70, col = "red");
+abline(h = 80, col = "red");
 # Determine cluster under the line # 80 # minSize 10
-clust = cutreeStatic(sampleTree, cutHeight = 70, minSize = 10)
+clust = cutreeStatic(sampleTree, cutHeight = 80, minSize = 10)
 table(clust)
 # clust 0 are outliers
-
-keepSamples = (clust!= 0) # 19 outliers
+keepSamples = (clust!= 0) # 5 outliers
 gene_matrix = gene_matrix[keepSamples, ]
 nGenes = ncol(gene_matrix)
 nSamples = nrow(gene_matrix)
-# datTraits = pheno_exprs[keepSamples, ]
-# pick trait Ratio_HBG
-datTraits = pheno_exprs[keepSamples, "Ratio_HBG"]
+
+# OPTION: Pick trait 
+datTraits = dge$samples[keepSamples, "Ratio_HBG"]
 
 # Re-cluster samples
 sampleTree2 = hclust(dist(gene_matrix), method = "average")
@@ -74,10 +78,10 @@ plotDendroAndColors(sampleTree2, traitColors,
 # So a higher power i.e 10 means that the scale free model tends to have 0.8 R2 which is hgh
 
 library(WGCNA)
-# allowWGCNAThreads()
+allowWGCNAThreads()
 
-powers <- c(1:14)
-sft <- pickSoftThreshold(gene_matrix, powerVector = powers)
+powers = c(c(1:10), seq(from = 12, to=20, by=2))
+sft <- pickSoftThreshold(gene_matrix, powerVector = powers, verbose = 5)
 
 # Plot the results:
 sizeGrWindow(9, 5)
@@ -97,13 +101,19 @@ plot(sft$fitIndices[,1], sft$fitIndices[,5],
      main = paste("Mean connectivity"))
 text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
 
+print(sft$powerEstimate)
 # function suggests 6 but I am going to use 8 based on inspection of scale free top model fit and mean connectivity
+# 
+#  Jul 14 redo of just sct, suggests 17?
 
 ### Portal-1 -------------------------------------------------------------
-rm(covar, filter_genes)
+
 #save.image(file = paste0(results_dir, "/1_sct_only_wgcna.RData"))
 # load(file = paste0(results_dir, "/1_sct_only_wgcna.RData)
 #TODO open_portal function
+
+#OPTION: custom sft power threshold
+sft$powerEstimate <- 12
 
 # 2) Perform signed network analysis -------------------------------
 allowWGCNAThreads()
@@ -111,7 +121,7 @@ allowWGCNAThreads()
 # Create a signed network using the chosen soft-thresholding power
 signed_net <- blockwiseModules(
   gene_matrix,
-  power = 9, # sft$powerEstimate, # Use the estimated power value from previous step 
+  power = sft$powerEstimate, # Use the estimated power value from previous step
   weights = NULL,
   TOMType = "signed",
   networkType = "unsigned",
@@ -120,14 +130,11 @@ signed_net <- blockwiseModules(
   verbose = 3
 )
 
-rm(combat, combat_norm, counts2, dge, ensembl)
-
 ### Portal-2----------------------------------------------
 # save.image(file = "wgcna.RData")
-# save.image(file = paste0(results_dir, "/2_sct_only_wgcna.RData"))
+save.image(file = paste0(results_dir, "/2_sct_only_wgcna.RData"))
 # load(file = paste0(results_dir, "/2_sct_only_wgcna.RData")
-
-load(file = paste0(results_dir, "/wgcna.RData"))
+# load(file = paste0(results_dir, "/wgcna.RData"))
 
 # open a graphics window
 sizeGrWindow(12, 9)
@@ -145,17 +152,18 @@ moduleColors = labels2colors(signed_net$colors)
 MEs = signed_net$MEs;
 geneTree = signed_net$dendrograms[[1]];
 
+## Portal 3 -----------------------------
 save(MEs, moduleLabels, moduleColors, geneTree,
-     file = "sct-all-networkConstruction.RData")
+     file = "3_sct-networkConstruction.RData")
 
 # 3 Identify modules (clusters) of co-expressed genes: -------------------------
 
 ## Select phenotypes
 
-datTraits = pheno_exprs[keepSamples, ]
-datTraits <- datTraits %>% select(eGFR, bmi_t0, Ratio_HBG, hgb, rbc_count, rbc_dist_width, platelet_count, wbc, lymphocytes)
+datTraits <- dge$samples[keepSamples, ]
+datTraits <- datTraits %>% select(Ratio_HBG, rbc_dist_width,  lymphocytes, neutrophil, tnf_alpha, eGFR, screat) # platelet_count bmi_t0
 
-datTraits <- datTraits %>% select(Ratio_HBG, lymphocytes)
+# datTraits <- datTraits %>% select(Ratio_HBG, wbc)
 
 # Define numbers of genes and samples
 nGenes = ncol(gene_matrix);
@@ -165,45 +173,54 @@ MEs0 = moduleEigengenes(gene_matrix, moduleColors)$eigengenes
 MEs = orderMEs(MEs0)
 moduleTraitCor = cor(MEs, datTraits, use = "p");
 moduleTraitPvalue = corPvalueStudent(moduleTraitCor, nSamples);
+# Tidy
+row.names(moduleTraitPvalue) <- str_remove_all(row.names(moduleTraitPvalue),"ME");
 ### Module correlation Plot ------------------------------
+
+# Main plot
 sizeGrWindow(10,6)
+# OPTION: Pval labelling
 # Will display correlations and their p-values
-textMatrix = paste(signif(moduleTraitCor, 2), "\n(",
-                   signif(moduleTraitPvalue, 1), ")", sep = "");
-dim(textMatrix) = dim(moduleTraitCor)
-par(mar = c(6, 8.5, 3, 3));
+textMatrix <- ifelse(moduleTraitPvalue < 0.05, signif(moduleTraitPvalue, 1), "")
+dim(textMatrix) <- dim(moduleTraitCor)
+
+par(mar <- c(6, 8.5, 3, 3));
+# OPTION ylab colour names or highlight
 ylabs <- str_remove_all(names(MEs), "ME")
+# Create the y-axis labels with "*" if the trait is significant
+# merge data
+# mutate
+ylabs <- ifelse(moduleTraitPvalue[,"Ratio_HBG"] < 0.05, "*", "")
+print(ifelse(moduleTraitPvalue[,"Ratio_HBG"] < 0.05, "sig", "NS"))
+
 # Display the correlation values within a heatmap plot
 labeledHeatmap(Matrix = moduleTraitCor,
                xLabels = names(datTraits),
                yLabels = names(MEs),
                ySymbols = ylabs,
                colorLabels = FALSE,
-               colors = greenWhiteRed(50),
-               textMatrix = FALSE,
+               colors = hcl.colors(50, palette = "RdBu"),
+               textMatrix = textMatrix,
                setStdMargins = FALSE,
                cex.text = 0.5,
                zlim = c(-1,1),
-               main = paste("Module-trait relationships"))
+               main = paste("SCT Module-trait relationships"))
 
+# violet,steelblue, orange
 
-library(ggplot2)
 # Calculate the number of genes per module
 moduleGenes <- table(moduleColors)
 
 # Merge module colors with the number of genes
 mergedData <- data.frame(ModuleColor = names(moduleGenes), NumGenes = as.numeric(moduleGenes))
 
-# Initialize the plot and specify aesthetics
-plot <- ggplot(mergedData, aes(x = ModuleColor, y = NumGenes))
-
 # Add bar plot layer
-plot <- plot + geom_bar(stat = "identity", fill = "blue") + labs(x = "Module Color", y = "Number of Genes", title = "Number of Genes per Module")
-
-# Display the plot
-plot
-
-
+ngenes <-
+  ggplot(mergedData, aes(x = ModuleColor, y = NumGenes, fill = ModuleColor)) +
+  geom_bar(stat = "identity") + scale_fill_manual(values = mergedData$ModuleColor) +
+  labs(x = "Module Color", y = "Number of Genes",
+       title = "Number of Genes per Module") +
+         theme(legend.position = "none", axis.text.x = element_blank()) 
 
 
 ## Focus on HBF ------------------------------------------
@@ -223,26 +240,25 @@ GSPvalue = as.data.frame(corPvalueStudent(as.matrix(geneTraitSignificance), nSam
 names(geneTraitSignificance) = paste("GS.", names(HBF), sep="");
 names(GSPvalue) = paste("p.GS.", names(HBF), sep="");
 
-
 # Investigate genes in modules
 names(gene_matrix)
-mod_col = c("sienna3")
+mod_col = c("violet")
 gene_interest <- colnames(gene_matrix)[moduleColors== mod_col]
 # Filter .11
 gene_interest <- sub("\\.[0-9]+$", "", gene_interest)
 
 # Get gene names
-
 ensembl = useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl")
 genes <- getBM(
-  attributes=c('ensembl_gene_id', 'hgnc_symbol','chromosome_name','start_position','end_position'),
+  attributes=c('ensembl_gene_id', 'hgnc_symbol','chromosome_name'),
   mart = ensembl)
 
 gene_interest <- filter(genes, ensembl_gene_id %in% gene_interest)
+# 355
 
-write.csv(gene_interest, file = paste0(results_dir, "/gene_interest_sienna3.csv"))
+write.csv(gene_interest, file = paste0(results_dir, "/gene_interest_violet.csv"))
 
-# compare against toptab
+# compare against top eQTLs -----------------------------
 gene_interest <- as.data.frame(gene_interest)
 
 toptab <- read.csv(file = "/home/mari/Documents/whi_sca/rna/results/toptab.csv")
@@ -253,60 +269,45 @@ overlap <- gene_interest[gene_interest$hgnc_symbol %in% toptab$Description, ]
 
 dim(overlap)
 
+# Highlight plots ----------------------------------------
 
+# Main plot
+sizeGrWindow(10,6)
+# OPTION: Pval labelling
+# Will display correlations and their p-values
+textMatrix <- ifelse(moduleTraitPvalue < 0.05, signif(moduleTraitPvalue, 1), "")
+dim(textMatrix) <- dim(moduleTraitCor)
 
+par(mfrow = c(1, 2));
+# OPTION ylab colour names or highlight
+ylabs <- str_remove_all(names(MEs), "ME")
+# Create the y-axis labels with "*" if the trait is significant
+# merge data
+# mutate
+ylabs <- ifelse(moduleTraitPvalue[,"Ratio_HBG"] < 0.05, "*", "")
+print(ifelse(moduleTraitPvalue[,"Ratio_HBG"] < 0.05, "sig", "NS"))
 
+png(paste0(plot_dir, "/module_trait_cor.png"), width = 7, height = 6, units = "in", res = 300)
+# Display the correlation values within a heatmap plot
+labeledHeatmap(Matrix = moduleTraitCor,
+               xLabels = names(datTraits),
+               yLabels = names(MEs),
+               ySymbols = ylabs,
+               colorLabels = FALSE,
+               colors = hcl.colors(50, palette = "RdBu"),
+               textMatrix = textMatrix,
+               setStdMargins = FALSE,
+               cex.text = 0.5,
+               zlim = c(-1,1),
+               main = paste("SCT Module-trait relationships"))
+dev.off()
 
-
-
-# Extra ------------
-
-# 3 Identify modules (clusters) of co-expressed genes: -------------------------
-
-# Module assignment
-
-# Choose a minimum module size (number of genes)
-min_module_size <- 30
-
-# Merge similar modules and define the module colors
-merged_modules <- mergeCloseModules(signed_net, cutHeight = 0.25, verbose = 3, colors = module_colors)
-module_colors <- labels2colors(signed_net$colors)
-
-# Assign modules to genes
-module_assignment <- merged_modules$colors
-names(module_assignment) <- colnames(gene_matrix)
-
-# 4 Identify modules significantly associated with HBF expression: -------------
-
-phenotype_data <- pheno
-
-# Convert HBF expression vector to numeric
-hbf_expression <- as.numeric(phenotype_data$HBF_Expression)
-
-# Perform module-trait relationship analysis
-module_trait_cor <- cor(hbf_expression, module_assignment, use = "p")
-module_trait_pvalue <- corPvalueStudent(module_trait_cor, nSamples = length(hbf_expression))
-
-# Select modules with significant correlation and adjust p-values for multiple testing
-module_trait_threshold <- 0.05  # Adjust as needed
-sig_modules <- module_trait_pvalue < module_trait_threshold
-
-# 5)  Visualise the analysis -------------------------------------------
-
-# Plot the network heatmap
-plotHeatmap(
-  signed_net,
-  main = "WGCNA Heatmap",
-  moduleColors = module_colors
-)
-
-# Plot the module-trait relationship
-plotModuleTraitHeatmap(
-  gene_matrix,
-  moduleColors = sig_module_colors,
-  traitData = hbf_expression,
-  main = "Module-Trait Relationship Heatmap"
-)
-
-sig_module_colors <- module_colors[sig_modules]
+# Highlight SCT cluster
+png(paste0(plot_dir, "/ngenes_module.png"), width = 7, height = 6, units = "in", res = 300)
+ngenes <- ngenes +
+  annotate("text", x = "violet", y = moduleGenes["violet"], label = "*", color = "black", size = 8, vjust = 0)  +
+  annotate("text", x = "steelblue", y = moduleGenes["steelblue"], label = "*", color = "black", size = 8, vjust = 0)  +
+  annotate("text", x = "orange", y = moduleGenes["orange"], label = "*", color = "black", size = 8, vjust = 0)
+ngenes
+dev.off()
 
