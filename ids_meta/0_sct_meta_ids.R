@@ -111,6 +111,13 @@ covar <- clean_cols(left_join(covar, sct, by = "commonid"))
 covar$sct <- ifelse(is.na(covar$sct) == T, 0, 1)
 table(covar$sct)
 
+# Add lymphocyte counts they went missing somehow
+meta <- clean_names(fread(file = paste0(meta_dir, "/WHI_all_subjects_PAGE_updated_phenotypes.txt")))
+meta <- meta %>% rename(subject_id = subjectid)
+
+lymph <- meta %>% select(subject_id, lymphocytes)
+covar <- left_join(covar, lymph, by = "subject_id")
+
 save.image(paste0(results_dir, "/metadata_july23.RData"))
 write.csv(covar, file = paste0(meta_dir, "/sct_all_covars_Jul23.csv"), row.names = F)
 
