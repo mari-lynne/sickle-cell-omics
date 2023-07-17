@@ -269,6 +269,15 @@ overlap <- gene_interest[gene_interest$hgnc_symbol %in% toptab$Description, ]
 
 dim(overlap)
 
+# FGSEA prep -------------------------------------------------------------------
+
+# Need to list of gene names/ids plus the fold change and other stats from toptab
+toptab <- read.csv(file = "/home/mari/Documents/whi_sca/rna/results/toptab.csv")
+toptab <- rename(toptab, hgnc_symbol = gene_name)
+geneList <- left_join(gene_interest, toptab, by = "hgnc_symbol")
+geneList <- dplyr::select(geneList, c("hgnc_symbol", "ensembl_gene_id", "logFC", "AveExpr", "t", "P.Value", "adj.P.Val", "B"))
+write.csv(geneList, file = paste0(results_dir, "/gene_list_violet.csv"))
+
 # Highlight plots ----------------------------------------
 
 # Main plot
