@@ -1,4 +1,4 @@
-# 5) Deconvolution -------------------------------------------------------------
+Deconvolution -------------------------------------------------------------
 
 # AIMS:
 # Using trecase output from step 4; deconvolute cell fractions using cibersort and LM22 signature matrix
@@ -72,25 +72,46 @@ pp_hat_ciber <- pp_hat_ciber[-nrow(pp_hat_ciber),]
 
 write.csv(pp_hat_ciber, file = paste0(results_dir, "pp_hat_ciber_test.csv"))
 
+# Merge cell types -------------------------------------------------------------
+pp_hat_ciber <- read.csv(file = "~/Documents/whi_sca/rna/results/ciber/R/pp_hat_ciber_test.csv")
+
+# Merged column names:
+T_cells <- colnames(pp_hat_ciber)[str_starts(colnames(pp_hat_ciber), "T")==TRUE]
+B_cells <- colnames(pp_hat_ciber)[str_starts(colnames(pp_hat_ciber), "B|Plasma")==TRUE]
+NK <- colnames(pp_hat_ciber)[str_starts(colnames(pp_hat_ciber), "NK")==TRUE]
+mono <- colnames(pp_hat_ciber)[str_starts(colnames(pp_hat_ciber), "Mono|Macro|Den|Mast")==TRUE]
+neut <- colnames(pp_hat_ciber)[str_starts(colnames(pp_hat_ciber), "Neut|Eo")==TRUE]
+
+# Create a new matrix with combined values and columns
+combined_matrix <- matrix(0, nrow = nrow(pp_hat_ciber), ncol = 5)  # Adjust the number of columns as needed
+colnames(combined_matrix) <- c("T_cells", "B_cells", "NK", "mono", "neut")
+row.names(combined_matrix) <- row.names(pp_hat_ciber)
+row.names(combined_matrix) <- (pp_hat_ciber$X)
+
+combined_matrix[, "T_cells"] <- rowSums(pp_hat_ciber[, T_cells])
+combined_matrix[, "B_cells"] <- rowSums(pp_hat_ciber[, B_cells])
+combined_matrix[, "NK"] <- rowSums(pp_hat_ciber[, NK])
+combined_matrix[, "mono"] <- rowSums(pp_hat_ciber[, mono])
+combined_matrix[, "neut"] <- rowSums(pp_hat_ciber[, neut])
+
+write.csv(combined_matrix, file = "~/Documents/whi_sca/rna/results/ciber/R/pp_hat_ciber_merged.csv")
+
+
 # Plotting ---------------------------------------------------------------------
 
-ciber <- as.data.frame(pp_hat_ciber)
-# ciber <- ciber %>% mutate(`941526` = jitter(`941437`))
+# ciber <- as.data.frame(pp_hat_ciber)
+ciber <- as.data.frame(combined_matrix)
+ciber$sample_id <- row.names(ciber)
 
-test <- as.data.frame(pp_hat_ciber)
-test$sample_id <- row.names(test)
-
-test <- test %>% group_by(sample_id)
-test <- melt(test, id.vars = c("sample_id"), measure.vars = c(1:(ncol(test)-1)))
-test <- test %>% rename(fraction = value,
-                        cell_type = variable)
-
-library(viridis)
-library(ggplot2)
-test %>% ggplot(aes(x=sample_id, y=fraction, fill=cell_type)) +
+ciber <- ciber %>% group_by(sample_id)
+ciber <- melt(ciber, id.vars = c("sample_id"), measure.vars = c(1:(ncol(ciber)-1)))
+ciber <- ciber %>% rename(fraction = value,
+                          cell_type = variable)
+# Plot
+ciber %>% ggplot(aes(x=sample_id, y=fraction, fill=cell_type)) +
   geom_bar(stat = "identity") +
   scale_fill_viridis(discrete=TRUE, option = "H", direction = -1, alpha = 0.95) +
   theme_light() +
-  labs(y = "Fraction \n", x= "Sample ID", title = "Cibersort Output Test") %>% facet_wrap(~)
+  labs(y = "Fraction \n", x= "Sample ID", title = "Cibersort Output")
 
-ciber %>% ggplot(aes())
+
