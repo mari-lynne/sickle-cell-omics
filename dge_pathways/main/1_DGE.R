@@ -47,8 +47,7 @@ pheno_name <- c("sct_rnaseq_pheno.txt")
 setwd(wd)
 
 # Data Set up ------------------------------------------------------------------
-
-load(file = paste0(results_dir, "/sct_dge.RData"))
+# load(file = paste0(results_dir, "/sct_dge.RData"))
 
 # RNA seq
 data <- read_omic(name = data_name, wd = wd)
@@ -56,7 +55,8 @@ data <- read_omic(name = data_name, wd = wd)
 # Phenotype and meta data (see sct_id_pheno_match.R for more)
 pheno <- fread(paste(meta_dir, pheno_name, sep = "/"))
 
-# Filter data to just include sct genotyped samples 
+# Filter data to just include sct genotyped samples
+pheno <- pheno[flagged_seq_qc != "Yes", ]
 sub <- data[,colnames(data)%in% pheno$rnaseq_ids]
 
 # Make DGE list object
@@ -66,24 +66,34 @@ counts <- as.matrix(sub)
 lsize <- colSums(counts)
 # save in pheno 
 pheno$lib.size_og <- lsize
-
 gene_info <- data[, 1:2]
 
 # PCA -------------------------------------------------------------------------
 
 # See pca.R
 pc_top <- fread(file = paste0(results_dir, "/pc_top.txt"))
+pc_top <- rename(pc_top, rnaseq_ids = V1)
+covar <- left_join(pheno, pc_top, by = "rnaseq_ids")
 
-covar <- cbind(pheno, pc_top)
-covar <- covar %>% select(-V1)
-
+# Update factors
 covar <- covar %>%
   mutate(plate = coalesce(covar$pick_plate1, covar$pick_plate_2_repeat)) %>%
   select(-c("pick_plate1", "pick_plate_2_repeat"))
-
-# Update factors
 covar$plate <- as.factor(covar$plate)
 covar$sct <- as.factor(covar$sct)
+
+# Updated covar file ----------------------------------------------------------
+meta_dir <- c("~/Documents/whi_sca/rna/meta")
+samp_covar <- read.csv(file.path(meta_dir, "sct_all_covars_Jul23.csv"))
+ciber <- read.csv(file = "~/Documents/whi_sca/rna/results/ciber/R/pp_hat_ciber_merged.csv")
+ciber <- rename(ciber, rnaseq_ids = X)
+
+# Include smokestaus and cell fractions
+samp_covar <- select(samp_covar, rnaseq_ids, smokestatus)
+
+# Join covar tables :)
+samp_covar <- left_join(samp_covar, ciber, by = "rnaseq_ids")
+covar <- left_join(covar, samp_covar, by = "rnaseq_ids")
 
 # Form DGE list ---------------------------------------------------------------
 
@@ -91,12 +101,12 @@ dge <- DGEList(counts=counts, samples=covar, genes=gene_info, group = covar$sct)
 
 # QC checks -----------------------
 lcpm <- cpm(dge$counts, log=TRUE)
-
 L <- mean(dge$samples$lib.size) * 1e-6
 M <- median(dge$samples$lib.size) * 1e-6
 c(L, M)
 
 # Filter zero counts across all samples
+dim(dge$counts)
 zero_counts <- rowSums(dge$counts==0)==ncol(dge$counts)
 dge <- dge[!zero_counts, ,keep.lib.sizes=FALSE]
 dim(dge$counts)
@@ -142,7 +152,6 @@ levels(col.group) <- brewer.pal(nlevels(col.group), "Set3")
 col.group <- as.character(col.group) # Character vector of colours
 # Plot MDS, PCA is faster
 plotMDS(lcpm2, labels = group, col = col.group, gene.selection = "common")
-# Not this either
 
 group <- as.factor(dge$samples$sct)
 col.group = group
@@ -153,29 +162,35 @@ plotMDS(lcpm2, labels = group, col = col.group, gene.selection = "common")
 
 # Although it seems like these are big outliers, the scale is pretty small, include PC's and batch in lm should correct for this
 
+# Outlier removal (see PCA.R) ------------------------------------------------
+
 
 # Normalisation----------------------------------------------------------------
 
 dge <- calcNormFactors(dge, method = "TMM")
 # dge  <- estimateDisp(dge, robust=TRUE)
-
 lcpm_norm <- cpm(dge, log=TRUE)
 boxplot(lcpm_norm, las=2, col=col, main="")
 title(main="B. Example: Normalised data", ylab="Log-cpm")
 
 # Design Matrix ---------------------------------------------------------------
 # Make var of interest a factor
+ # just have current versus past/na
+# Assuming 'dge' is your data frame
+dge$samples$smokestatus <- dge$samples$smokestatus.y
+dge$samples$smokestatus <- ifelse(is.na(dge$samples$smokestatus), 0, dge$samples$smokestatus)
+dge$samples <- dplyr::mutate(dge$samples, smokestatus = ifelse(smokestatus != 2, 0, smokestatus))
+dge$samples$smokestatus <- as.factor(dge$samples$smokestatus)
+
 design <-
   model.matrix(~0 +
-                 sct + age + plate + bmi_t0 +
-                 PC1 +PC2 +PC3 +PC4 +PC5 +PC6 +PC7 +PC8 +PC9 +PC10 +PC11 +PC12 +PC13 +PC14,
+                 sct + plate + smokestatus + bmi_t0 + age + 
+                 PC1 +PC2 +PC3 +PC4 +PC5 +PC6 +PC7 +PC8 +PC9 +PC10 +PC11 +PC12 +PC13 +PC14 + neut + B_cells + mono,
                data = dge$samples)
-
-View(design)
 
 # Limma voom -------------------------------------------------------------------
 
-pdf(paste(plot_dir,"voom2.pdf",sep ="/"))
+pdf(paste(plot_dir,"voom.pdf",sep ="/"))
 v <- voom(dge, design, plot = TRUE)
 dev.off()
 
@@ -203,21 +218,25 @@ plotSA(efit)
 
 sct_top <- topTable(efit, coef = 1, number = Inf)
 
-
 # Volcano Plots ---------------------------------------------------------------
-# Caused by error in `FUN()`: ! object 'gene_name' not found
-# update colname to match function
-#TODO improve function to have a gene col vector name variable
-
 toptab <- sct_top
 toptab$gene_name <- toptab$Description
 
-# TODO 
-# sig function also include FC threshold, check gray shading bit for log FC
+genes <- c("HEMGN", "RBM38", "SCOC", "ABCB6", "FHDC1", "SPTA1", "TAL1", "RANBP10", "BLVRB", "SOX6", "TRIM10", "YPEL4", "IGF2BP2", "RUNDC3A", "PRDX6", "TRAT1", "SCOC", "BLVRB", "VWCE", "RPL30", "RPS15A")
 
-pdf(paste(plot_dir,"sct_dge2.pdf",sep ="/"))
-plot_vol(toptab, lab = 'top', title = "DEG Sickle Cell Trait (rs334)", FC = 0.25, alpha = 0.6,
+# RPL30 RPS15A dimond blackfan anemia
+
+pdf(paste(plot_dir,"sct_dge.pdf",sep ="/"))
+
+plot_vol(toptab,
+         lab = 'adj.sig',
+         title = "DEG Sickle Cell Trait (rs334)",
+         FC = 0.1,
+         alpha = 0.6,
+         gene_lab = "custom",
+         genes_interest = genes,
           colours = c("orange", "#ef5a3a", "#a50000", "#800000"))
+
 dev.off()
 
 png(paste(plot_dir,"sct_dge2.png",sep ="/"))
@@ -225,15 +244,21 @@ plot_vol(toptab, lab = 'top', title = "DEG Sickle Cell Trait (rs334)", FC = 0.25
          colours = c("orange", "#ef5a3a", "#a50000", "#800000"))
 dev.off()
 
-save.image(file = paste0(results_dir, "/sct_dge.RData"))
+# save.image(file = paste0(results_dir, "/sct_dge.RData"))
 
 # sig FC gene list
 # Adj P < 0.05 (FDR), and FC >0.02
 
+sig <- filter(sct_top, adj.P.Val <= 0.05 & abs(logFC) > 0.15)
 sig <- filter(sct_top, adj.P.Val <= 0.05)
 
-results_dir <- paste(wd, "results", sep = "/")
-write.table(sig, file = paste(results_dir, "top_sig_dge.txt", sep = "/"), quote = F, sep = "\t", row.names = F, col.names = T)
+write.csv(sig,
+          file = paste(results_dir, "top_sig_dge_fc0.csv",
+                  sep = "/"),
+          row.names = F)
+
+# save.image(file = "sct_july_dge.RData")
+
 write.table(sig$Description, file = paste(results_dir, "top_genes.txt", sep = "/"), quote = F, sep = "\t", row.names = F, col.names = F)
 
 
@@ -255,30 +280,37 @@ write.csv(topmed, file = paste0(results_dir, "genes-interest.csv"), row.names = 
 # Haemostasis related genes ----------------------------------------------------
 
 # DGE SCA Steady state vs Healthy controls
+sig$gene_name <- sig$Description
+
 sca_genes <- read.csv(file = "sca_dge.csv")
 sca_genes$Description <- str_trim(sca_genes$Description)
-sig_sca <- filter(toptab, gene_name %in% sca_crisis$Description)
+sig_sca <- filter(sig, gene_name %in% sca_genes$Description)
 
 # DGE SCA Crisis vs Healthy controls
 sca_crisis <- read.csv(file = "sca_crisis_dge.csv")
-# trim white space
 sca_crisis$Description <- str_trim(sca_crisis$Description)
+sig_crisis <- filter(sig, gene_name %in% sca_crisis$Description)
 
 
 a <- plot_vol(toptab, lab = 'adj.sig',
               genes = sca_genes$Description,
+              gene_lab = "custom",
               title = "SCT (rs334) vs healthy controls \n\n SCA steady state genes",
               FC = 0.25,
               alpha = 0.6,
               colours = c("orange", "#ef5a3a", "#a50000", "#800000"))
 
+a
 
-b <- plot_vol(toptab, lab = 'adj.sig',
+b <- plot_vol(toptab,
          genes = sca_crisis$Description,
+         lab_type = "custom",
          title = "SCT (rs334) vs healthy controls \n\n SCA crisis genes",
-         FC = 0.25,
+         FC = 0.1,
          alpha = 0.6,
          colours = c("orange", "#ef5a3a", "#a50000", "#800000"))
+
+b
 
 (a|b) + plot_annotation(tag_levels = "a")
 
@@ -529,10 +561,10 @@ colnames(top_tpm) <- topmed$genes$hgnc_symbol
 top_tpm <- cbind(topmed$samples, top_tpm)
 top_tpm <- select(top_tpm, -commonid)
 
-#load(file = paste0(results_dir, "/sct_dge.RData"))
-
-write.csv(top_toptab, file = paste0(results_dir, "/top_tab_sig.csv"), row.names = F)
-write.csv(top_tpm, file = paste0(results_dir, "/tpm_sig.csv"), row.names = F)
+# load(file = paste0(results_dir, "/sct_dge.RData"))
+# write.csv(toptab, file = paste0(results_dir, "/top_tab.csv"), row.names = F)
+# write.csv(top_toptab, file = paste0(results_dir, "/top_tab_sig.csv"), row.names = F)
+# write.csv(top_tpm, file = paste0(results_dir, "/tpm_sig.csv"), row.names = F)
 
 
 # TPM correlations ------------------------------------------------------------
