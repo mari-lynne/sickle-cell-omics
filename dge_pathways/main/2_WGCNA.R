@@ -132,9 +132,10 @@ signed_net <- blockwiseModules(
 
 ### Portal-2----------------------------------------------
 # save.image(file = "wgcna.RData")
-save.image(file = paste0(results_dir, "/2_sct_only_wgcna.RData"))
-# load(file = paste0(results_dir, "/2_sct_only_wgcna.RData")
 # load(file = paste0(results_dir, "/wgcna.RData"))
+# save.image(file = paste0(results_dir, "/2_sct_only_wgcna.RData"))
+load(file = paste0(results_dir, "/2_sct_only_wgcna.RData"))
+
 
 # open a graphics window
 sizeGrWindow(12, 9)
@@ -161,7 +162,7 @@ save(MEs, moduleLabels, moduleColors, geneTree,
 ## Select phenotypes
 
 datTraits <- dge$samples[keepSamples, ]
-datTraits <- datTraits %>% select(Ratio_HBG, rbc_dist_width,  lymphocytes, neutrophil, tnf_alpha, eGFR, screat) # platelet_count bmi_t0
+datTraits <- datTraits %>% select(Ratio_HBG, rbc_dist_width, neutrophil, tnf_alpha, eGFR, screat) # platelet_count bmi_t0  lymphocytes,
 
 # datTraits <- datTraits %>% select(Ratio_HBG, wbc)
 
@@ -207,6 +208,7 @@ labeledHeatmap(Matrix = moduleTraitCor,
                main = paste("SCT Module-trait relationships"))
 
 # violet,steelblue, orange
+# steelblue, black, yellow, light cyan
 
 # Calculate the number of genes per module
 moduleGenes <- table(moduleColors)
@@ -240,34 +242,26 @@ GSPvalue = as.data.frame(corPvalueStudent(as.matrix(geneTraitSignificance), nSam
 names(geneTraitSignificance) = paste("GS.", names(HBF), sep="");
 names(GSPvalue) = paste("p.GS.", names(HBF), sep="");
 
-# Investigate genes in modules
-names(gene_matrix)
-mod_col = c("violet")
-gene_interest <- colnames(gene_matrix)[moduleColors== mod_col]
-# Filter .11
-gene_interest <- sub("\\.[0-9]+$", "", gene_interest)
+# Investigate genes in modules --------------------------
 
-# Get gene names
-ensembl = useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl")
-genes <- getBM(
-  attributes=c('ensembl_gene_id', 'hgnc_symbol','chromosome_name'),
-  mart = ensembl)
+# Get a list of significant modules with trait of interest:
+p_values <- moduleTraitPvalue[, "Ratio_HBG"]
+# Extract the color names where p-value < 0.05
+significant_colors <- rownames(moduleTraitPvalue)[p_values < 0.05]
+# Print the significant color names
+print(significant_colors)
 
-gene_interest <- filter(genes, ensembl_gene_id %in% gene_interest)
-# 355
+# Get ensembl Mart and toptables
+ensembl_mart <- useEnsembl(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
+top_tab <- "/home/mari/Documents/whi_sca/rna/results/toptab.csv"
 
-write.csv(gene_interest, file = paste0(results_dir, "/gene_interest_violet.csv"))
+# Process clusters and overlapped genes
+process_color_module(module_colors=significant_colors, gene_matrix=gene_matrix, ensembl_mart=ensembl_mart, results_dir=results_dir, top_table=top_tab)
 
-# compare against top eQTLs -----------------------------
-gene_interest <- as.data.frame(gene_interest)
+# Portal-4: ----------------------------------------------------
+# save.image(file = paste0(results_dir, "/4_wgcna_sct.RData"))
+load(file = paste0(results_dir, "/4_wgcna_sct.RData"))
 
-toptab <- read.csv(file = "/home/mari/Documents/whi_sca/rna/results/toptab.csv")
-toptab <- filter(toptab, (adj.P.Val < 0.05 & (logFC < -0.1 | logFC > 0.1 ))) %>% select(Description)
-
-# 47 genes from trait are in this module
-overlap <- gene_interest[gene_interest$hgnc_symbol %in% toptab$Description, ]
-
-dim(overlap)
 
 # FGSEA prep -------------------------------------------------------------------
 
