@@ -1,7 +1,7 @@
 install.packages("rentrez")
 library(rentrez)
 
-genes <- c("FGR2A", "IFNG", "ABCC1")
+genes <- c("FCGR2A", "IFNG", "ABCC1")
 term_of_interest <- "typhoid fever"
 
 get_pubmed_links <- function(gene, term) {
